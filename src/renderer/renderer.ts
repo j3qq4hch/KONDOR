@@ -24,6 +24,9 @@ declare global {
       unwatchGlb:     (p: string) => Promise<void>;
       onGlbModified:  (cb: (path: string) => void) => void;
       exportScene:    (buf: ArrayBuffer) => Promise<{ ok: boolean; error?: string }>;
+      openConBut:     (boards: Array<{ id: string; name: string; brdPath: string }>, layout: unknown) => Promise<void>;
+      getConButLayout:() => Promise<unknown>;
+      onShowConId:    (cb: (conId: string) => void) => void;
     };
   }
 }
@@ -87,6 +90,7 @@ const btnHome           = document.getElementById('btn-home')!;
 const btnAlign          = document.getElementById('btn-align')!;
 const btnRotate         = document.getElementById('btn-rotate')!;
 const btnSnapAlign      = document.getElementById('btn-snap-align')!;
+const btnShowConnections = document.getElementById('btn-show-connections')!;
 const alignHint         = document.getElementById('align-hint')!;
 const conIdListEl       = document.getElementById('conid-list')!;
 // File menu
@@ -94,6 +98,7 @@ const btnFile           = document.getElementById('btn-file')!;
 const fileMenuEl        = document.getElementById('file-menu')!;
 const fileImport3d      = document.getElementById('file-import-3d')!;
 const fileImportBrd     = document.getElementById('file-import-brd')!;
+const fileOpenConBut    = document.getElementById('file-open-conbut')!;
 const fileExportScene   = document.getElementById('file-export-scene')!;
 const fileSettings      = document.getElementById('file-settings')!;
 // Settings modal
@@ -798,8 +803,8 @@ document.addEventListener('keydown', (e) => {
     if (alignState.active || snapState.active || rotateState.active) {
       exitAlignMode(); exitSnapAlignMode(); exitRotateMode(true);
     } else {
-      if (selectedConId) {
-        selectedConId = null;
+      if (selectedConIds.size > 0) {
+        selectedConIds.clear();
         clearConIdViz();
         renderConIdList();
       } else {
@@ -818,6 +823,9 @@ document.addEventListener('keydown', (e) => {
     const anyUnlocked = [...selectedIds].some(id => !entities.find(en => en.id === id)?.locked);
     for (const id of selectedIds) { const en = entities.find(en => en.id === id); if (en) en.locked = anyUnlocked; }
     renderList(); updateHandle(); return;
+  }
+  if (e.code === 'KeyC' && !e.ctrlKey && !e.altKey && !e.metaKey && !(e.target instanceof HTMLInputElement)) {
+    showConnectionsTool(); return;
   }
   if (e.key === 'Delete' && selectedIds.size > 0 && !(e.target instanceof HTMLInputElement)) {
     const toDelete = [...selectedIds];
@@ -847,7 +855,8 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.ctrlKey && e.code === 'KeyN') { e.preventDefault(); newDevice(); return; }
   if (e.ctrlKey && e.code === 'KeyO') { e.preventDefault(); openDevice(); return; }
-  if (e.ctrlKey && e.code === 'KeyS') { e.preventDefault(); saveDevice(); return; }
+  if (e.ctrlKey && e.code === 'KeyS' && !e.shiftKey) { e.preventDefault(); saveDevice(); return; }
+  if (e.ctrlKey && e.shiftKey && e.code === 'KeyS') { e.preventDefault(); saveDevice(true); return; }
   if (e.ctrlKey && e.code === 'KeyB') { e.preventDefault(); importBrd(); return; }
   if (e.ctrlKey && e.code === 'KeyM') { e.preventDefault(); addModel(); return; }
   if (e.ctrlKey && e.code === 'KeyZ' && !e.shiftKey) {
@@ -1081,6 +1090,39 @@ btnRotateLeft.addEventListener('click',  () => rotateView(-1));
 btnRotateRight.addEventListener('click', () => rotateView( 1));
 btnHome.addEventListener('click', resetToHome);
 btnAlign.addEventListener('click', () => alignState.active ? exitAlignMode() : enterAlignMode());
+
+function showConnectionsTool(): void {
+  const brdEntities = [...selectedIds]
+    .map(id => entities.find(e => e.id === id))
+    .filter((e): e is Entity => !!e?.brdPath);
+
+  if (brdEntities.length === 0) return;
+
+  selectedConIds.clear();
+
+  if (brdEntities.length === 1) {
+    const conIds = [...new Set((brdEntities[0].connectors ?? []).map(c => c.conId))].sort();
+    for (const conId of conIds) selectedConIds.set(conId, nextColorIdx());
+  } else {
+    const conIdEntityMap = new Map<string, Set<string>>();
+    for (const entity of brdEntities) {
+      for (const conn of (entity.connectors ?? [])) {
+        if (!conIdEntityMap.has(conn.conId)) conIdEntityMap.set(conn.conId, new Set());
+        conIdEntityMap.get(conn.conId)!.add(entity.id);
+      }
+    }
+    const shared = [...conIdEntityMap.entries()]
+      .filter(([, ids]) => ids.size >= 2)
+      .map(([conId]) => conId)
+      .sort();
+    for (const conId of shared) selectedConIds.set(conId, nextColorIdx());
+  }
+
+  if (selectedConIds.size > 0) refreshConIdViz(); else clearConIdViz();
+  renderConIdList();
+}
+
+btnShowConnections.addEventListener('click', showConnectionsTool);
 
 let rotSnapAxis: { normal: THREE.Vector3; pivot: THREE.Vector3; entityId: string } | null = null;
 
@@ -1681,32 +1723,53 @@ document.addEventListener('pointerdown', (e) => {
 });
 
 // ── CONID VISUALIZATION ───────────────────────────────────────────────────────
+const CONID_COLORS = [
+  0xff3b3b, // red
+  0x3bff5a, // green
+  0x3b9eff, // blue
+  0xffa63b, // orange
+  0xd43bff, // purple
+  0x3bfff0, // cyan
+  0xffee3b, // yellow
+  0xff3bb5, // pink
+];
+
 const conIdVizObjects: THREE.Object3D[] = [];
 
-type HighlightEntry = { mat: THREE.MeshStandardMaterial; origEmissive: THREE.Color; origEmissiveIntensity: number };
+type HighlightEntry = { mesh: THREE.Mesh; matIndex: number | null; origMat: THREE.Material };
 const conIdHighlights: HighlightEntry[] = [];
 
 function clearConIdHighlights(): void {
-  for (const { mat, origEmissive, origEmissiveIntensity } of conIdHighlights) {
-    mat.emissive.copy(origEmissive);
-    mat.emissiveIntensity = origEmissiveIntensity;
+  for (const { mesh, matIndex, origMat } of conIdHighlights) {
+    if (matIndex === null) mesh.material = origMat;
+    else (mesh.material as THREE.Material[])[matIndex] = origMat;
   }
   conIdHighlights.length = 0;
 }
 
-function highlightConnectorMesh(entity: Entity, refDes: string): void {
+function highlightConnectorMesh(entity: Entity, refDes: string, color: number): void {
   const node = entity.object.getObjectByName(refDes);
   if (!node) return;
   node.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
-    const mats = Array.isArray(child.material) ? child.material : [child.material];
-    for (const mat of mats) {
-      const m = mat as THREE.MeshStandardMaterial;
-      if (!m.emissive) continue;
-      if (conIdHighlights.some(h => h.mat === m)) continue; // shared material — already saved
-      conIdHighlights.push({ mat: m, origEmissive: m.emissive.clone(), origEmissiveIntensity: m.emissiveIntensity ?? 1 });
-      m.emissive.set(0xff6600);
-      m.emissiveIntensity = 0.8;
+    if (Array.isArray(child.material)) {
+      child.material.forEach((mat, i) => {
+        const m = mat as THREE.MeshStandardMaterial;
+        if (!m.emissive) return;
+        const clone = m.clone() as THREE.MeshStandardMaterial;
+        clone.emissive.set(color);
+        clone.emissiveIntensity = 0.7;
+        conIdHighlights.push({ mesh: child, matIndex: i, origMat: mat });
+        (child.material as THREE.Material[])[i] = clone;
+      });
+    } else {
+      const m = child.material as THREE.MeshStandardMaterial;
+      if (!m.emissive) return;
+      const clone = m.clone() as THREE.MeshStandardMaterial;
+      clone.emissive.set(color);
+      clone.emissiveIntensity = 0.7;
+      conIdHighlights.push({ mesh: child, matIndex: null, origMat: child.material });
+      child.material = clone;
     }
   });
 }
@@ -1744,8 +1807,7 @@ function mstEdges(pts: THREE.Vector3[]): Array<[number, number]> {
   return edges;
 }
 
-function showConIdViz(conId: string): void {
-  clearConIdViz();
+function showSingleConIdViz(conId: string, color: number): void {
   const refs = conIdRegistry.get(conId);
   if (!refs) return;
 
@@ -1756,11 +1818,11 @@ function showConIdViz(conId: string): void {
     const conn = entity.connectors.find(c => c.conId === conId && c.refDes === ref.refDes);
     if (!conn) continue;
     pts.push(getConnectorWorldPos(entity, conn));
-    highlightConnectorMesh(entity, ref.refDes);
+    highlightConnectorMesh(entity, ref.refDes, color);
   }
   if (pts.length === 0) return;
 
-  const mat = new THREE.MeshBasicMaterial({ color: 0xffaa00, depthTest: false });
+  const mat = new THREE.MeshBasicMaterial({ color, depthTest: false });
   const geo = new THREE.SphereGeometry(0.0008, 8, 6);
   for (const pt of pts) {
     const m = new THREE.Mesh(geo, mat);
@@ -1770,7 +1832,7 @@ function showConIdViz(conId: string): void {
     conIdVizObjects.push(m);
   }
 
-  const lineMat = new THREE.LineBasicMaterial({ color: 0xffaa00, depthTest: false });
+  const lineMat = new THREE.LineBasicMaterial({ color, depthTest: false });
   for (const [i, j] of mstEdges(pts)) {
     const lineGeo = new THREE.BufferGeometry().setFromPoints([pts[i], pts[j]]);
     const line = new THREE.Line(lineGeo, lineMat);
@@ -1780,9 +1842,21 @@ function showConIdViz(conId: string): void {
   }
 }
 
+function refreshConIdViz(): void {
+  clearConIdViz();
+  for (const [conId, colorIdx] of selectedConIds) {
+    showSingleConIdViz(conId, CONID_COLORS[colorIdx % CONID_COLORS.length]);
+  }
+}
+
 // ── CONID REGISTRY ───────────────────────────────────────────────────────────
 const conIdRegistry = new Map<string, Array<{ entityId: string; refDes: string }>>();
-let selectedConId: string | null = null;
+const selectedConIds = new Map<string, number>(); // conId → color index
+
+function nextColorIdx(): number {
+  const used = new Set(selectedConIds.values());
+  for (let i = 0; ; i++) if (!used.has(i)) return i;
+}
 
 function registerConIds(entity: Entity): void {
   if (!entity.connectors) return;
@@ -1796,10 +1870,10 @@ function registerConIds(entity: Entity): void {
 function unregisterConIds(entityId: string): void {
   for (const [key, arr] of conIdRegistry) {
     const filtered = arr.filter(a => a.entityId !== entityId);
-    if (filtered.length === 0) conIdRegistry.delete(key);
+    if (filtered.length === 0) { conIdRegistry.delete(key); selectedConIds.delete(key); }
     else conIdRegistry.set(key, filtered);
   }
-  if (selectedConId && !conIdRegistry.has(selectedConId)) { selectedConId = null; clearConIdViz(); }
+  if (selectedConIds.size === 0) clearConIdViz(); else refreshConIdViz();
   renderConIdList();
 }
 
@@ -1835,24 +1909,42 @@ function renderConIdList(): void {
   }
   const sorted = [...conIdRegistry.keys()].sort();
   for (const conId of sorted) {
-    const refs = conIdRegistry.get(conId)!;
+    const refs    = conIdRegistry.get(conId)!;
+    const colorIdx = selectedConIds.get(conId);
+    const isSelected = colorIdx !== undefined;
     const item = document.createElement('div');
-    item.className = 'conid-item' + (conId === selectedConId ? ' selected' : '');
+    item.className = 'conid-item' + (isSelected ? ' selected' : '');
     item.title = refs.map(r => r.refDes).join(', ');
-    item.textContent = conId + (refs.length > 1 ? ` (${refs.length})` : '');
-    item.addEventListener('click', () => {
-      if (conIdClickTimer) return; // ignore first click of a double-click
+
+    if (isSelected) {
+      const dot = document.createElement('span');
+      dot.className = 'conid-dot';
+      dot.style.background = '#' + CONID_COLORS[colorIdx % CONID_COLORS.length].toString(16).padStart(6, '0');
+      item.appendChild(dot);
+    }
+    const label = document.createElement('span');
+    label.textContent = conId + (refs.length > 1 ? ` (${refs.length})` : '');
+    item.appendChild(label);
+
+    item.addEventListener('click', (e) => {
+      if (conIdClickTimer) return;
       conIdClickTimer = setTimeout(() => {
         conIdClickTimer = null;
-        selectedConId = selectedConId === conId ? null : conId;
-        if (selectedConId) showConIdViz(selectedConId); else clearConIdViz();
+        if (e.ctrlKey || e.metaKey) {
+          if (isSelected) selectedConIds.delete(conId);
+          else selectedConIds.set(conId, nextColorIdx());
+        } else {
+          selectedConIds.clear();
+          if (!isSelected) selectedConIds.set(conId, 0);
+        }
+        if (selectedConIds.size > 0) refreshConIdViz(); else clearConIdViz();
         renderConIdList();
       }, 220);
     });
     item.addEventListener('dblclick', () => {
       if (conIdClickTimer) { clearTimeout(conIdClickTimer); conIdClickTimer = null; }
-      selectedConId = conId;
-      showConIdViz(conId);
+      if (!isSelected) selectedConIds.set(conId, selectedConIds.size === 0 ? 0 : nextColorIdx());
+      refreshConIdViz();
       renderConIdList();
       flyToConId(conId);
     });
@@ -2051,7 +2143,7 @@ async function updateBoard(entityId: string): Promise<void> {
         entity.boardHeightMm = parsed.heightMm;
         entity.brdMtime      = res.brdMtime;
         registerConIds(entity);
-        if (selectedConId) showConIdViz(selectedConId);
+        if (selectedConIds.size > 0) refreshConIdViz();
       }
       scene.add(entity.object);
       updateSelectionBoxes();
@@ -2132,6 +2224,24 @@ window.kondor.onGlbModified((glbPath: string) => {
   renderList();
 });
 
+// ── CONNECTION BUTLER INTEGRATION ────────────────────────────────────────────
+window.kondor.onShowConId((conId: string) => {
+  if (!selectedConIds.has(conId)) {
+    selectedConIds.set(conId, selectedConIds.size === 0 ? 0 : nextColorIdx());
+  }
+  refreshConIdViz();
+  renderConIdList();
+  flyToConId(conId);
+});
+
+async function openConBut(): Promise<void> {
+  const boards = entities
+    .filter(e => e.brdPath)
+    .map(e => ({ id: e.id, name: e.name, brdPath: e.brdPath! }));
+  const layout = await window.kondor.getConButLayout();
+  await window.kondor.openConBut(boards, layout);
+}
+
 // ── FILE MENU ─────────────────────────────────────────────────────────────────
 const DEFAULT_EAGLECON_CMD = "run export3D_raw.ulp '400'; UNDO; QUIT";
 
@@ -2161,13 +2271,16 @@ document.addEventListener('pointerdown', (e) => {
 
 const fileNewDevice  = document.getElementById('file-new-device')!;
 const fileLoadDevice = document.getElementById('file-load-device')!;
-const fileSaveDevice = document.getElementById('file-save-device')!;
+const fileSaveDevice   = document.getElementById('file-save-device')!;
+const fileSaveDeviceAs = document.getElementById('file-save-device-as')!;
 
 fileNewDevice.addEventListener('click',  () => { closeFileMenu(); newDevice(); });
 fileLoadDevice.addEventListener('click', () => { closeFileMenu(); openDevice(); });
-fileSaveDevice.addEventListener('click', () => { closeFileMenu(); saveDevice(); });
+fileSaveDevice.addEventListener('click',   () => { closeFileMenu(); saveDevice(); });
+fileSaveDeviceAs.addEventListener('click', () => { closeFileMenu(); saveDevice(true); });
 fileImport3d.addEventListener('click',   () => { closeFileMenu(); addModel(); });
 fileImportBrd.addEventListener('click',  () => { closeFileMenu(); importBrd(); });
+fileOpenConBut.addEventListener('click', () => { closeFileMenu(); openConBut(); });
 fileExportScene.addEventListener('click', () => { closeFileMenu(); exportSceneGlb(); });
 inputLightIntensity.addEventListener('input', () => {
   const v = parseFloat(inputLightIntensity.value);
@@ -2256,11 +2369,12 @@ interface KDevEntity {
   boardHeightMm?: number;
 }
 interface KDevGroup { name: string; entityIndices: number[]; }
-interface KDevFile { version: 1; entities: KDevEntity[]; groups?: KDevGroup[]; }
+interface KDevFile { version: 1; entities: KDevEntity[]; groups?: KDevGroup[]; conbutLayout?: unknown; }
 
 let currentDevicePath: string | null = null;
 
-function serializeDevice(): string {
+async function serializeDevice(): Promise<string> {
+  const conbutLayout = await window.kondor.getConButLayout();
   const kdev: KDevFile = {
     version: 1,
     entities: entities.map(e => ({
@@ -2283,6 +2397,7 @@ function serializeDevice(): string {
         .map(id => entities.findIndex(e => e.id === id))
         .filter(i => i >= 0),
     })),
+    conbutLayout,
   };
   return JSON.stringify(kdev, null, 2);
 }
@@ -2360,7 +2475,7 @@ async function restoreDevice(kdev: KDevFile): Promise<void> {
 }
 
 async function saveDevice(saveAs = false): Promise<void> {
-  const data   = serializeDevice();
+  const data   = await serializeDevice();
   const path   = saveAs ? undefined : currentDevicePath ?? undefined;
   const res    = await window.kondor.saveDevice(data, path);
   if (res?.ok && res.filePath) {
@@ -2385,7 +2500,7 @@ function newDevice(): void {
   if (entities.length > 0 && !confirm('Close current device without saving?')) return;
   for (const e of [...entities]) deleteEntity(e.id);
   clearConIdViz();
-  selectedConId     = null;
+  selectedConIds.clear();
   currentDevicePath = null;
   rotSnapAxis       = null;
   exitRotateMode();

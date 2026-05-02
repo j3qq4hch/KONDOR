@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Connection Butler</title>
+  <link rel="stylesheet" href="./conbut.css"/>
+</head>
+<body>
+
+  <div id="sidebar">
+    <div class="section-header">Boards</div>
+    <div id="board-list"></div>
+    <div class="section-header">Connections</div>
+    <div id="connection-list"></div>
+  </div>
+
+  <div id="canvas-container">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <!-- Connection context menu -->
+  <div id="conn-ctx-menu" class="ctx-menu">
+    <div class="menu-item" id="conn-ctx-pinout">Show pinout</div>
+    <div class="menu-item" id="conn-ctx-model">Show in model</div>
+    <div class="menu-separator"></div>
+    <div class="menu-item" id="conn-ctx-rename">Rename…</div>
+    <div class="menu-item danger" id="conn-ctx-delete">Delete</div>
+  </div>
+
+  <!-- Port context menu -->
+  <div id="port-ctx-menu" class="ctx-menu">
+    <div class="menu-item" id="port-ctx-set">Set CONID…</div>
+    <div class="menu-item danger" id="port-ctx-clear">Clear CONID</div>
+  </div>
+
+  <!-- Set CONID dialog -->
+  <div id="conid-dialog" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-title" id="conid-dialog-label">Set CONID:</div>
+      <input type="text" id="conid-input" spellcheck="false" autocomplete="off"/>
+      <div class="modal-actions">
+        <button class="btn-cancel" id="conid-cancel">Cancel</button>
+        <button class="btn-ok" id="conid-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename connection dialog -->
+  <div id="rename-dialog" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-title">Rename connection:</div>
+      <input type="text" id="rename-input" spellcheck="false" autocomplete="off"/>
+      <div class="modal-actions">
+        <button class="btn-cancel" id="rename-cancel">Cancel</button>
+        <button class="btn-ok" id="rename-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./conbut.ts"></script>
+</body>
+</html>

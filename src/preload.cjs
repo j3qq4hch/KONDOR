@@ -31,4 +31,15 @@ contextBridge.exposeInMainWorld('kondor', {
   // Events from main → renderer
   onBrdModified:  (cb) => ipcRenderer.on('brd:modified', (_e, path) => cb(path)),
   onGlbModified:  (cb) => ipcRenderer.on('glb:modified', (_e, path) => cb(path)),
+
+  // Connection Butler
+  openConBut:          (boards, layout) => ipcRenderer.invoke('conbut:open', { boards, layout }),
+  showInModel:         (conId)          => ipcRenderer.invoke('conbut:show-in-model', conId),
+  openPinout:          (data)           => ipcRenderer.invoke('conbut:open-pinout', data),
+  setConId:            (brdPath, refDes, value) => ipcRenderer.invoke('brd:set-conid', { brdPath, refDes, value }),
+  updateConButLayout:  (layout)         => ipcRenderer.invoke('conbut:update-layout', layout),
+  getConButLayout:     ()               => ipcRenderer.invoke('conbut:get-layout'),
+  onConButInit:        (cb) => ipcRenderer.on('conbut:init',      (_e, data) => cb(data)),
+  onPinoutInit:        (cb) => ipcRenderer.on('pinout:init',      (_e, data) => cb(data)),
+  onShowConId:         (cb) => ipcRenderer.on('conbut:show-conid',(_e, conId) => cb(conId)),
 });

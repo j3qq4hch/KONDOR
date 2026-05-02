@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { resolve } from 'path';
 
 export default defineConfig({
   root: 'src/renderer',
@@ -6,5 +7,12 @@ export default defineConfig({
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main:   resolve(__dirname, 'src/renderer/index.html'),
+        conbut: resolve(__dirname, 'src/renderer/conbut.html'),
+        pinout: resolve(__dirname, 'src/renderer/pinout.html'),
+      },
+    },
   },
 });

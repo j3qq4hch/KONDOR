@@ -63,6 +63,34 @@ function unwatchGlb(glbPath: string): void {
   glbWatchers.delete(glbPath);
 }
 
+// ── ConBut / Pinout windows ───────────────────────────────────────────────────
+let conbutWin: BrowserWindow | null = null;
+let pinoutWin: BrowserWindow | null = null;
+let storedConButLayout: unknown = null;
+
+function setConIdInXml(xml: string, refDes: string, newValue: string): string {
+  const safeRef = refDes.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const safeVal = newValue
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return xml.replace(
+    new RegExp(`(<element\\b(?=[^>]*\\bname="${safeRef}")[^>]*>[\\s\\S]*?</element>)`, 'g'),
+    (block) => {
+      // Try updating existing value="..."
+      const updated = block.replace(
+        /(<attribute\b(?=[^>]*\bname="CONID")[^>]*\bvalue=")[^"]*/i,
+        `$1${safeVal}`
+      );
+      if (updated !== block) return updated;
+      // Add value attribute if missing
+      return block.replace(
+        /(<attribute\b(?=[^>]*\bname="CONID")[^>]*?)(\/?>)/i,
+        `$1 value="${safeVal}"$2`
+      );
+    }
+  );
+}
+
 // ── Window ────────────────────────────────────────────────────────────────────
 function createWindow(): void {
   mainWin = new BrowserWindow({
@@ -265,6 +293,67 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:get', () => readSettings());
   ipcMain.handle('settings:set', (_e, data: Record<string, string>) => {
     writeSettings(data); return true;
+  });
+
+  // ── ConBut ──────────────────────────────────────────────────────────────────
+  ipcMain.handle('conbut:open', (_e, payload: unknown) => {
+    if (conbutWin && !conbutWin.isDestroyed()) {
+      conbutWin.focus();
+      conbutWin.webContents.send('conbut:init', payload);
+      return;
+    }
+    conbutWin = new BrowserWindow({
+      width: 1000, height: 680,
+      webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: false },
+      title: 'Connection Butler',
+      backgroundColor: '#1e1e1e',
+    });
+    conbutWin.loadFile(join(__dirname, '../dist/renderer/conbut.html'));
+    conbutWin.on('closed', () => { conbutWin = null; });
+    conbutWin.webContents.once('did-finish-load', () => {
+      conbutWin?.webContents.send('conbut:init', payload);
+    });
+  });
+
+  ipcMain.handle('conbut:show-in-model', (_e, conId: string) => {
+    mainWin?.webContents.send('conbut:show-conid', conId);
+  });
+
+  ipcMain.handle('conbut:open-pinout', (_e, data: unknown) => {
+    if (pinoutWin && !pinoutWin.isDestroyed()) {
+      pinoutWin.focus();
+      pinoutWin.webContents.send('pinout:init', data);
+      return;
+    }
+    pinoutWin = new BrowserWindow({
+      width: 800, height: 500,
+      webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: false },
+      title: 'Pinout',
+      backgroundColor: '#1e1e1e',
+    });
+    pinoutWin.loadFile(join(__dirname, '../dist/renderer/pinout.html'));
+    pinoutWin.on('closed', () => { pinoutWin = null; });
+    pinoutWin.webContents.once('did-finish-load', () => {
+      pinoutWin?.webContents.send('pinout:init', data);
+    });
+  });
+
+  ipcMain.handle('conbut:update-layout', (_e, layout: unknown) => {
+    storedConButLayout = layout;
+  });
+
+  ipcMain.handle('conbut:get-layout', () => storedConButLayout);
+
+  // Write CONID value into BRD XML (string replacement, no full serialization)
+  ipcMain.handle('brd:set-conid', (_e, { brdPath, refDes, value }: { brdPath: string; refDes: string; value: string }) => {
+    try {
+      const xml    = readFileSync(brdPath, 'utf8');
+      const updated = setConIdInXml(xml, refDes, value);
+      writeFileSync(brdPath, updated, 'utf8');
+      return { ok: true };
+    } catch (e: unknown) {
+      return { ok: false, error: String(e) };
+    }
   });
 
   createWindow();
