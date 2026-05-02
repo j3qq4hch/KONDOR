@@ -27,6 +27,7 @@ declare global {
       openConBut:     (boards: Array<{ id: string; name: string; brdPath: string }>, layout: unknown) => Promise<void>;
       getConButLayout:() => Promise<unknown>;
       onShowConId:    (cb: (conId: string) => void) => void;
+      onShowBoard:    (cb: (entityId: string) => void) => void;
     };
   }
 }
@@ -853,6 +854,7 @@ document.addEventListener('keydown', (e) => {
       return;
     }
   }
+  if (e.code === 'KeyB' && !e.ctrlKey && !e.altKey && !e.metaKey && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); openConBut(); return; }
   if (e.ctrlKey && e.code === 'KeyN') { e.preventDefault(); newDevice(); return; }
   if (e.ctrlKey && e.code === 'KeyO') { e.preventDefault(); openDevice(); return; }
   if (e.ctrlKey && e.code === 'KeyS' && !e.shiftKey) { e.preventDefault(); saveDevice(); return; }
@@ -2232,6 +2234,12 @@ window.kondor.onShowConId((conId: string) => {
   refreshConIdViz();
   renderConIdList();
   flyToConId(conId);
+});
+
+window.kondor.onShowBoard((entityId: string) => {
+  selectEntity(entityId);
+  const entity = entities.find(e => e.id === entityId);
+  if (entity) fitCamera(entity.object);
 });
 
 async function openConBut(): Promise<void> {

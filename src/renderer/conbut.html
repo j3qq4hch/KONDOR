@@ -23,6 +23,7 @@
   <div id="conn-ctx-menu" class="ctx-menu">
     <div class="menu-item" id="conn-ctx-pinout">Show pinout</div>
     <div class="menu-item" id="conn-ctx-model">Show in model</div>
+    <div class="menu-item" id="conn-ctx-notes">Notes…</div>
     <div class="menu-separator"></div>
     <div class="menu-item" id="conn-ctx-rename">Rename…</div>
     <div class="menu-item danger" id="conn-ctx-delete">Delete</div>
@@ -32,6 +33,12 @@
   <div id="port-ctx-menu" class="ctx-menu">
     <div class="menu-item" id="port-ctx-set">Set CONID…</div>
     <div class="menu-item danger" id="port-ctx-clear">Clear CONID</div>
+  </div>
+
+  <!-- Board context menu -->
+  <div id="board-ctx-menu" class="ctx-menu">
+    <div class="menu-item" id="board-ctx-rotate">Rotate 90°</div>
+    <div class="menu-item" id="board-ctx-model">Show in model</div>
   </div>
 
   <!-- Set CONID dialog -->
@@ -55,6 +62,20 @@
         <button class="btn-cancel" id="rename-cancel">Cancel</button>
         <button class="btn-ok" id="rename-ok">OK</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Note preview modal -->
+  <div id="note-modal" class="modal-backdrop">
+    <div class="note-modal">
+      <div class="note-modal-header">
+        <span id="note-modal-title"></span>
+        <div class="note-modal-actions">
+          <button id="note-modal-edit">Open in editor</button>
+          <button id="note-modal-close">✕</button>
+        </div>
+      </div>
+      <div id="note-modal-body" class="note-modal-body"></div>
     </div>
   </div>
 

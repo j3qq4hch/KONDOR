@@ -42,4 +42,11 @@ contextBridge.exposeInMainWorld('kondor', {
   onConButInit:        (cb) => ipcRenderer.on('conbut:init',      (_e, data) => cb(data)),
   onPinoutInit:        (cb) => ipcRenderer.on('pinout:init',      (_e, data) => cb(data)),
   onShowConId:         (cb) => ipcRenderer.on('conbut:show-conid',(_e, conId) => cb(conId)),
+  showBoardInModel:    (entityId) => ipcRenderer.invoke('conbut:show-board', entityId),
+  onShowBoard:         (cb) => ipcRenderer.on('conbut:show-board', (_e, entityId) => cb(entityId)),
+
+  // Notes (sidecar .md files)
+  openNote:  (conId) => ipcRenderer.invoke('notes:open', conId),
+  readNote:  (conId) => ipcRenderer.invoke('notes:read', conId),
+  listNotes: ()      => ipcRenderer.invoke('notes:list'),
 });

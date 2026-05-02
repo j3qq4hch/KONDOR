@@ -1,7 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { fileURLToPath } from 'url';
 import { dirname, join, basename, extname } from 'path';
-import { existsSync, statSync, readFileSync, writeFileSync, mkdirSync, watch } from 'fs';
+import { existsSync, statSync, readFileSync, writeFileSync, mkdirSync, readdirSync, watch } from 'fs';
 import { spawn } from 'child_process';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // ── Settings ──────────────────────────────────────────────────────────────────
@@ -66,14 +66,11 @@ function setConIdInXml(xml, refDes, newValue) {
     const safeVal = newValue
         .replace(/&/g, '&amp;').replace(/</g, '&lt;')
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    return xml.replace(new RegExp(`(<element\\b(?=[^>]*\\bname="${safeRef}")[^>]*>[\\s\\S]*?</element>)`, 'g'), (block) => {
-        // Try updating existing value="..."
-        const updated = block.replace(/(<attribute\b(?=[^>]*\bname="CONID")[^>]*\bvalue=")[^"]*/i, `$1${safeVal}`);
-        if (updated !== block)
-            return updated;
-        // Add value attribute if missing
-        return block.replace(/(<attribute\b(?=[^>]*\bname="CONID")[^>]*?)(\/?>)/i, `$1 value="${safeVal}"$2`);
-    });
+    return xml.replace(new RegExp(`(<element\\b(?=[^>]*\\bname="${safeRef}")[^>]*>[\\s\\S]*?</element>)`, 'g'), (block) => block.replace(/(<attribute\b(?=[^>]*\bname="CONID")[^>]*?)\/?>/i, (_, attrs) => {
+        // Strip any existing value= then add the new one
+        const clean = attrs.replace(/\s+value="[^"]*"/gi, '');
+        return safeVal ? `${clean} value="${safeVal}"/>` : `${clean}/>`;
+    }));
 }
 // ── Window ────────────────────────────────────────────────────────────────────
 function createWindow() {
@@ -296,6 +293,56 @@ app.whenReady().then(() => {
     });
     ipcMain.handle('conbut:show-in-model', (_e, conId) => {
         mainWin?.webContents.send('conbut:show-conid', conId);
+    });
+    ipcMain.handle('conbut:show-board', (_e, entityId) => {
+        mainWin?.webContents.send('conbut:show-board', entityId);
+    });
+    // ── Notes (sidecar .md files in device_notes/ next to .kdev) ───────────────
+    function sanitizeForFilename(name) {
+        return name.replace(/[\\/:*?"<>|]/g, '_') || '_';
+    }
+    function getNotesDir() {
+        const kdev = readSettings().lastDevicePath;
+        if (!kdev)
+            return null;
+        return join(dirname(kdev), 'device_notes');
+    }
+    ipcMain.handle('notes:open', async (_e, conId) => {
+        const dir = getNotesDir();
+        if (!dir)
+            return { ok: false, error: 'Save the device file first' };
+        mkdirSync(dir, { recursive: true });
+        const filePath = join(dir, sanitizeForFilename(conId) + '.md');
+        if (!existsSync(filePath)) {
+            writeFileSync(filePath, `# ${conId}\n\n`, 'utf8');
+        }
+        await shell.openPath(filePath);
+        return { ok: true };
+    });
+    ipcMain.handle('notes:read', (_e, conId) => {
+        const dir = getNotesDir();
+        if (!dir)
+            return null;
+        const filePath = join(dir, sanitizeForFilename(conId) + '.md');
+        if (!existsSync(filePath))
+            return null;
+        try {
+            return { content: readFileSync(filePath, 'utf8'), dir };
+        }
+        catch {
+            return null;
+        }
+    });
+    ipcMain.handle('notes:list', () => {
+        const dir = getNotesDir();
+        if (!dir || !existsSync(dir))
+            return [];
+        try {
+            return readdirSync(dir).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3));
+        }
+        catch {
+            return [];
+        }
     });
     ipcMain.handle('conbut:open-pinout', (_e, data) => {
         if (pinoutWin && !pinoutWin.isDestroyed()) {
